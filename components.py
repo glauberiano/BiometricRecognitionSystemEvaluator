@@ -1,17 +1,13 @@
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix 
+from abc import ABC, abstractmethod
+from classifiers import M2005
 
-class DBCreator():
-    '''
-    Classe para separar os usuários, dados e variaveis que serão salvas em um banco de dados para utilização do sistema de reconhecimento.
-    '''
-    def __init__(self, dataset=None):
-        '''parameters:
-            - dataset: pandas.DataFrame
-        '''
-        self._dataset = dataset
-    
-    def create_db(self, user_column=None, n=None, users=None):
+class Cadastramento:
+    def __init__(self):
+        pass
+
+    def create(self, dataset=None, n_amostras=None, users_list=None):
         '''
         parameters:
             - user_column (str): coluna do dataset que indica o usuário
@@ -24,37 +20,15 @@ class DBCreator():
         '''
         user_information = {} #dicionário em que serão salvas as informações de cada usuário registrado
         index_used_in_db = list() #lista de indices das observações salvas no banco de dados
-        for us in users: #para cada usuário no dataset enviado
-            temp = self._dataset[self._dataset[user_column] == us] #separar as observações do usuário
-            user_information[us] = temp.iloc[:n] #salvar as n primeiras observações no dicionário
-            index_used_in_db = index_used_in_db + user_information[us].index.tolist() #guardar os indices utilizados
+        for user in users_list: #para cada usuário no dataset enviado
+            temp = dataset[dataset['subject'] == user] #separar as observações do usuário
+            user_information[user] = temp.iloc[:n_amostras] #salvar as n primeiras observações no dicionário
+            index_used_in_db = index_used_in_db + user_information[user].index.tolist() #guardar os indices utilizados
         
-        data_not_used = self._dataset.drop(self._dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas
+        data_not_used = dataset.drop(dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas
         return user_information, data_not_used
-        
-class FeatureExtractor():
-    '''
-    Classe que extrai características (traços biométricos) de um conjunto de variáveis.
-    '''
-    def __init__(self):
-        pass
     
-    def create_feat(self, dataset=None, method='M2005', ignored_columns=None):
-        '''
-        parameters:
-            - dataset (pandas.Dataframe): banco de dados com informações de usuários
-            - method (str): método de extração
-            - ignored_columns (list): colunas do dataset que devem ser ignoradas
-        
-        return:
-            - banco de dados (dict) de traços biométricos de cada usuário registrado 
-        '''
-        biometricFeatures = dict() 
-        if method=='M2005':
-            biometricFeatures = classification.M2005_FE(dataset=dataset, ignored_columns=ignored_columns)
-            return biometricFeatures
-        
-class DataStream():
+class DataStream:
     '''
     Class que cria o fluxo de dados utilizado para testes.
     '''
@@ -79,22 +53,24 @@ class DataStream():
         ext_imp_samples = data[data['subject'].isin(external)] # separando amostras de usuários não registrados
         
         # separando o número de amostras que serão utilizadas no fluxo
-        #import pdb; pdb.set_trace();
         n_impostor = int((len(genuine_samples) * (1-self.__impostor_rate)) / self.__impostor_rate)
         n_internal_imp = int(n_impostor * (1-self.__rate_external_impostor))
         n_external_imp = n_impostor - n_internal_imp
         
         # enviando amostras aleatórias de cada usuário para a criação do fluxo
-        dataStream = sampling.random(genuine_samples=genuine_samples,
+        dataStream = Sampling.random(genuine_samples=genuine_samples,
                                     internal_samples=int_imp_samples.iloc[:n_internal_imp],
                                     external_samples=ext_imp_samples.iloc[:n_external_imp])
         return dataStream
 
-class sampling():
+class Sampling:
     '''
     Class que reproduz a forma de amostragem do fluxo de dados
     '''
-    def random(genuine_samples=None, internal_samples=None, external_samples=None):
+    def __init__(self):
+        pass
+
+    def random(self, genuine_samples=None, internal_samples=None, external_samples=None):
         '''
         parameters:
             - Recebe amostras genuínas e impostoras
@@ -103,9 +79,12 @@ class sampling():
         '''
         d = [genuine_samples, internal_samples, external_samples]
         dataStream = pd.concat(d) #concatenando os dados
-        dataStream = dataStream.sample(frac=1).reset_index(drop=True) #reordenando aleatóriamente
+        dataStream = dataStream.sample(frac=1, random_state=42).reset_index(drop=True) #reordenando aleatóriamente
         return dataStream
+
     
+    
+'''
 class classification():
     def M2005_FE(dataset=None, ignored_columns=None):
         features = dict()
@@ -153,12 +132,27 @@ class classification():
             list_of_scores.append(score)
         FNMR, FMR, B_acc = classification.report_metrics(y_true=y_true, y_pred=y_pred)
         return FNMR, FMR, B_acc, list_of_scores
+'''
+
+'''        
+class FeatureExtractor():
+    #Classe que extrai características (traços biométricos) de um conjunto de variáveis.
     
-    def report_metrics(y_true=None, y_pred=None):
-        #import pdb; pdb.set_trace();
-        cm = confusion_matrix(y_true, y_pred, labels=['genuine','impostor'])
-        FNMR = cm[1,0] / (cm[0,0] + cm[1,0])
-        FMR = cm[0,1] / (cm[0,1] + cm[1,1])
-        B_acc = 1 - ((FNMR + FMR)/2)
-        metrics = {'FNMR' : FNMR, 'FMR' : FMR, 'B_acc' : B_acc}
-        return FNMR, FMR, B_acc
+    def __init__(self):
+        pass
+    
+    def create_feat(self, dataset=None, method='M2005', ignored_columns=None):
+        
+        #parameters:
+        #    - dataset (pandas.Dataframe): banco de dados com informações de usuários
+        #    - method (str): método de extração
+        #    - ignored_columns (list): colunas do dataset que devem ser ignoradas
+        #
+        #return:
+        #    - banco de dados (dict) de traços biométricos de cada usuário registrado 
+        
+        biometricFeatures = dict() 
+        if method=='M2005':
+            biometricFeatures = classification.M2005_FE(dataset=dataset, ignored_columns=ignored_columns)
+            return biometricFeatures
+'''
