@@ -63,7 +63,7 @@ class EuclidianClassifier(ClassificationAlgorithm):
                 else:
                     y_impostor.append(0)
             list_of_scores.append(distance)
-        FMR, FNMR, B_acc = Metrics.report(y_genuino, y_impostor)
+        FMR, FNMR, B_acc = Metrics.report(y_genuino=y_genuino, y_impostor=y_impostor)
         return FMR, FNMR, B_acc, list_of_scores
 
 class M2005(ClassificationAlgorithm):
@@ -139,10 +139,7 @@ class M2005UserModel(UserModel):
 
 # metrics class
 class Metrics:
-    def __init__(self):
-        pass
-        
-    def report(self, y_genuino=None, y_impostor=None):
+    def report(y_genuino=None, y_impostor=None):
         FNMR = 1.0 - sum(y_genuino)/len(y_genuino)
         FMR = sum(y_impostor)/len(y_impostor)
         B_acc = 1.0 - (FNMR + FMR) / 2.0
