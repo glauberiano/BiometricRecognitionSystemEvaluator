@@ -5,9 +5,8 @@ Classe principal:
     * Em um sistema de reconhecimento padrão, o sistema cria um modelo para todos os usuários
 '''
 
-from components import Cadastramento
-from components import DBCreator
-from components import DataStream
+from components import Enrollment
+from components import Random, GenFirst, ImpFirst
 from classifiers import M2005
 from classifiers import EuclidianClassifier
 from classifiers import Metrics
@@ -33,15 +32,21 @@ class RecognitionSystem():
             return kfold.split(list_users)
         
     def __runNotAdaptive(self, dataset=None, model_size=None, impostor_rate=None, rate_external_impostor=None,
-                         decision_threshold=None):
+                         decision_threshold=None, sampling=None):
         
         list_of_scores = {'FMR' : list(),
                           'FNMR' : list(),
                           'B_acc' :  list()}
         
+        if sampling=='random':
+            data_stream = Random(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor)
+        elif sampling=='gen_first':
+            data_stream = GenFirst(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor)
+        elif sampling=='imp_first':
+            data_stream = ImpFirst(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor)
         
-        ds = DataStream(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor)
-        userInformations = Cadastramento()
+        #ds = DataStream(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor)
+        userInformations = Enrollment()
         kfold = KFold(n_splits=5)
         splits = kfold.split(self._usuarios)
         
@@ -58,11 +63,12 @@ class RecognitionSystem():
                 counter += 1
                 ipd.clear_output(wait=True)
                 print('Split ' +str(counter_folds) + ' de ' + str(kfold.n_splits) + '\n' +   'Usuário ' + str(counter) + ' de ' + str(len(u_reg)))
+                
                 #import pdb; pdb.set_trace();
                 
-                dataStream = ds.create(data=samples, genuine=usuario, internal=u_reg, external=u_nao_reg)
+                test_stream = data_stream.create(data=samples, genuine=usuario, internal=u_reg, external=u_nao_reg)
                 userBiometricModel = self.classifier.train_user_model(user_features=usersDatabase[usuario])
-                FMR, FNMR, B_acc, _ = self.classifier.test(genuine_user=usuario, test_stream=dataStream, 
+                FMR, FNMR, B_acc, _ = self.classifier.test(genuine_user=usuario, test_stream=test_stream, 
                                                            user_model=userBiometricModel, decision_threshold=decision_threshold)
                 list_of_scores['FMR'].append(FMR)
                 list_of_scores['FNMR'].append(FNMR)
