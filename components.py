@@ -3,7 +3,7 @@ import numpy as np
 import random
 from sklearn.metrics import classification_report, confusion_matrix 
 from abc import ABC, abstractmethod
-from classifiers import M2005
+from classifiers import M2005Classifier
 
 class Enrollment:
     def __init__(self):
@@ -31,9 +31,10 @@ class Enrollment:
         return user_information, data_not_used
     
 class DataStream(ABC):
-    def __init__(self, impostor_rate, rate_external_impostor):
+    def __init__(self, impostor_rate, rate_external_impostor, n_series=None):
         self.impostor_rate = impostor_rate # taxa de impostores
         self.rate_external_impostor = rate_external_impostor # dos impostores no fluxo, define quantos são externos
+        self._n_series = n_series
         super().__init__()
 
     def _extract_datasets(self, data, genuine, internal, external):
@@ -82,7 +83,6 @@ class Random(DataStream):
             c = external_samples.columns
             external_samples = external_samples.reset_index(drop=True)
 
-        #import pdb; pdb.set_trace();
         random.Random(42).shuffle(l_ds)
         datastream = list()
         for i in l_ds:
@@ -110,3 +110,20 @@ class ImpFirst(DataStream):
         genuine_samples, internal_samples, external_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
         frames = [internal_samples, external_samples, genuine_samples]
         return pd.concat(frames)
+
+class SeriesAttack(DataStream):
+    '''falta ajustar para impostores externos
+    '''
+    def create(self, data=None, genuine=None, internal=None, external=None):
+        genuine_samples, internal_impostors, _ = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
+        m = int(len(genuine_samples) / self._n_series)
+        g_idx = list(range(0,len(genuine_samples), m))
+        n = int(len(internal_impostors) / self._n_series)
+        i_idx = list(range(0,len(internal_impostors), n))
+        g_idx.append(len(genuine_samples))
+        i_idx.append(len(internal_impostors))
+        ds = list()
+        for i in range(self._n_series):
+            ds.append(internal_impostors[i_idx[i]:i_idx[i+1]])
+            ds.append(genuine_samples[g_idx[i]:g_idx[i+1]])
+        return pd.concat(ds)

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from sklearn.svm import OneClassSVM
+from sklearn.base import BaseEstimator
 import pandas as pd
 import numpy as np
 
@@ -21,7 +22,7 @@ class ClassificationAlgorithm(ABC):
 # Create classes for classification algorithms
         
 class EuclidianClassifier(ClassificationAlgorithm):
-    def train_user_model(self, user_features=None):
+    def train_user_model(self, user_features=None, normalize=False):
         try:
             user_features=user_features.drop('subject', axis=1)
         except:
@@ -30,29 +31,37 @@ class EuclidianClassifier(ClassificationAlgorithm):
         centroids = list()
         distance_train = list()
         
+        if (normalize==True):
+            self._normalize_params = dict()
+            for col in user_features:
+                self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
+                user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
+
         len_features = user_features.shape[0]
         for feature in user_features:
             centroids.append(np.sum(user_features[feature] / len_features))
         for _, row in user_features.iterrows():
             distance_train.append(np.sqrt(sum((row-centroids)**2)))
-        average_distance = np.sum(distance_train) / len_features
+        average_distance = np.mean(distance_train)
+        std_distance = np.std(distance_train)
         user_model = EuclidianUserModel()
-        user_model.update(model=average_distance, centroids=centroids)
+        user_model.update(model=(average_distance-std_distance, average_distance+std_distance), centroids=centroids)
         return user_model
 
-    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=0.00):
-        #distance_test = list()
-        #import pdb; pdb.set_trace();
-        
+    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, normalize=False):
         list_of_scores = list()
         y_genuino = list()
         y_impostor = list()
         y_true = test_stream.loc[:, 'subject']
         test_stream=test_stream.drop('subject', axis=1)
 
+        if normalize==True:
+            for col in test_stream.columns:
+                test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
+
         for i, row in test_stream.iterrows():
             distance = np.sqrt(sum((row - user_model.centroids)**2))
-            if (distance <= user_model.model):
+            if ((distance >= user_model.model[0]) & (distance <= user_model.model[1])):
                 if (y_true[i] == genuine_user):
                     y_genuino.append(1)
                 else:
@@ -66,14 +75,21 @@ class EuclidianClassifier(ClassificationAlgorithm):
         FMR, FNMR, B_acc = Metrics.report(y_genuino=y_genuino, y_impostor=y_impostor)
         return FMR, FNMR, B_acc, list_of_scores
 
-class M2005(ClassificationAlgorithm):
-    def train_user_model(self, user_features=None):
+class M2005Classifier(ClassificationAlgorithm):
+    def train_user_model(self, user_features=None, normalize=False):
         user_model_object = M2005UserModel()
         usft = dict()
         try:
             user_features=user_features.drop('subject', axis=1)
         except:
             pass
+        
+        if (normalize==True):
+            self._normalize_params = dict()
+            for col in user_features:
+                self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
+                user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
+        
         for feature in user_features:
             lower = min(user_features[feature].mean(), user_features[feature].median()) * (0.95 - (user_features[feature].std() / user_features[feature].mean()))
             upper = max(user_features[feature].mean(), user_features[feature].median()) * (1.05 + (user_features[feature].std() / user_features[feature].mean()))
@@ -81,12 +97,16 @@ class M2005(ClassificationAlgorithm):
         user_model_object.update(model=usft)
         return user_model_object
 
-    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=0.00):
+    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=0.00, normalize=False):
         list_of_scores = list()
         y_genuino = list()
         y_impostor = list()
         y_true = test_stream.loc[:, 'subject']
         test_stream=test_stream.drop('subject', axis=1)
+
+        if (normalize==True):
+            for col in test_stream.columns:
+                test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
 
         for i, row in test_stream.iterrows():
             match_sum = 0
