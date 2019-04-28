@@ -39,11 +39,19 @@ class Validation:
         self.model = classifier
 
     def run(self, usersData):
+        '''Parameters:
+        usersData - dicionário em que .key() é o usuário e .values() as amostras desse usuario que devem ser utilizadas no cadastramento
+
+
+        Return:
+        threshold_dict - dicionario em que .key() é o usuário e .values() a melhor linha de decisão os dados de treinamento vistos.
+        '''
+
         thresholds_dict = dict()
         first = True
-        for user in usersData.keys():
-            treino = usersData[user][:20]
-            modelo = self.train.train_user_model(treino)
+        for user in usersData.keys(): #Para cada usuario no banco
+            treino = usersData[user][:20] 
+            modelo = self.train.train_user_model(treino) #treinar um modelo 
             impostor_users = np.setdiff1d([*usersData] , user)
             for iu in impostor_users:
                 if first == True:
@@ -51,8 +59,9 @@ class Validation:
                     first = False
                 else:
                     impostor_data = pd.concat([impostor_data, usersData[iu][:40]], axis=0, ignore_index=True)
-            impostor_data  = impostor_data.sample(20, replace=False).reset_index(drop=True)          
+            impostor_data  = impostor_data.sample(20, replace=False).reset_index(drop=True) #sorteio de 20 amostras aleatorias dentre todas as possíveis          
             
+            # Gerando scores para fluxo genuino e impostor
             if self.model == 'Euclidian':
                 scoreType='distance'
                 genuineScores = self.euclidian_score(modelo.model, usersData[user][20:40])
@@ -87,18 +96,12 @@ class Validation:
         except:
             pass
 
-        #p = user_model.shape[0]
-        #if ((test_stream.shape[1]) !=p):
-        #    raise Exception("Numero de features diferente")
-
-        
-        #import pdb;pdb.set_trace();
         scores = list()
         for _, row in test_stream.iterrows():
             match_sum = 0
             previousDimMatched = False
             for dim in user_model.keys():
-                if (row[dim] <= user_model[dim][1]) and (row[dim] >= user_model[dim][0]):
+                if (row[dim] >= user_model[dim][0]) and (row[dim] <= user_model[dim][1]):
                     if previousDimMatched:
                         match_sum = match_sum + 1.5
                     else:
@@ -164,10 +167,10 @@ class DataStream(ABC):
         super().__init__()
 
     def _extract_datasets(self, data, genuine, internal, external):
-        genuine_samples = data[data['subject']==genuine] # separando amostras genuínas;
-        in_samples = data[data['subject'].isin(internal)] # separando amostras de usuários registrados
+        genuine_samples = data[data['subject']==genuine] # fluxo de dados genuinos;
+        in_samples = data[data['subject'].isin(internal)] # fluxo de dados de usuarios cadastrados
         int_imp_samples = in_samples[in_samples['subject'] != genuine] # com exceção do usuário genuino;
-        ext_imp_samples = data[data['subject'].isin(external)] # separando amostras de usuários não registrados
+        ext_imp_samples = data[data['subject'].isin(external)] # fluxo de dados de usuarios externos
         
         # separando o número de amostras que serão utilizadas no fluxo
         n_impostor = int((len(genuine_samples) * self.impostor_rate) / (1-self.impostor_rate))
@@ -176,12 +179,15 @@ class DataStream(ABC):
 
         internal_samples=int_imp_samples.iloc[:n_internal_imp]
         external_samples=ext_imp_samples.iloc[:n_external_imp]
-
         impostor_samples = pd.concat([internal_samples, external_samples], axis=0, ignore_index=True)
 
+        # retorna um fluxo de dados genuinos e um fluxo de dados impostores
         return genuine_samples, impostor_samples
         
     def _extrai(self, df1):
+        ##
+        # Retorna o primeiro elemento do dataframe e exclui o elemento
+         
         a = df1.values.tolist()[0]
         df1.drop(df1.index[0], inplace=True)
         return a
@@ -193,7 +199,7 @@ class DataStream(ABC):
 class Random(DataStream):
     def create(self, data=None, genuine=None, internal=None, external=None):
         genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
-        l_ds = list()
+        l_ds = list() # lista binária. 1 == amostra genuina; 0 == amostra impostora; 
         if type(genuine_samples) != None:
             b = np.ones(len(genuine_samples)).tolist()
             l_ds.extend(b)
@@ -205,8 +211,9 @@ class Random(DataStream):
             c = impostor_samples.columns
             impostor_samples = impostor_samples.reset_index(drop=True)
 
-        random.Random(42).shuffle(l_ds)
+        random.Random(42).shuffle(l_ds) #Embaralha a a lista binária
         datastream = list()
+        
         for i in l_ds:
             if i == 1:
                 datastream.append(self._extrai(genuine_samples))
@@ -231,10 +238,7 @@ class ImpFirst(DataStream):
         return pd.concat(frames, ignore_index=True)
 
 class SeriesAttack(DataStream):
-    '''falta ajustar para impostores externos
-    '''
     def create(self, data=None, genuine=None, internal=None, external=None):
-        #import pdb;pdb.set_trace();
         genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
         n_series = math.ceil(len(impostor_samples) / self._len_attacks)
         lenG = math.ceil(len(genuine_samples)/n_series)

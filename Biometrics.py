@@ -35,6 +35,13 @@ class RecognitionSystem():
     def _run(self, dataset=None, method=None, model_size=None, impostor_rate=0.5, rate_external_impostor=0,
                          sampling='Random', len_attacks=None, normalize=False, adaptive=None):
         
+        '''
+        Funcao: executar o sistema!
+
+        Para o dataset selecionado; com os parametros selecionados;
+        '''
+
+
         assert method in ['M2005', 'Euclidian'], 'method must be on of \'M2005\', \'Euclidian\''
         self.classifier = eval(method+'Classifier')(name=method, normalize=normalize, adaptive=adaptive)
         
@@ -42,35 +49,24 @@ class RecognitionSystem():
                           'FNMR' : list(),
                           'B_acc' :  list()}
 
-        import pdb;pdb.set_trace();
-        
         # data_stream: objeto que guarda configurações de como será construido o fluxo de dados no teste.
         data_stream = eval(sampling)(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor, len_attacks=len_attacks)
         
-        # splitTrainTest: objeto que separa fluxos de treino e de teste.
+        # splitTrainTest: objeto que separa os indexes dos usuários de modo que possamos validar os resultados com amostras genuinas e impostoras
         splitTrainTest = Enrollment()
         kfold = KFold(n_splits=5)
         splits = kfold.split(self._usuarios)
         
-        #counter_folds = 0
         for internal_idx, external_idx in splits:
             u_reg = self._usuarios[internal_idx]
             u_nao_reg = self._usuarios[external_idx]
             usersDatabase, samples, decision_threshold = splitTrainTest.create(dataset=dataset, n_amostras=model_size, users_list=u_reg, classifier=method, normalize=normalize)
-            #counter=0
-            #counter_folds += 1
             
             for usuario in u_reg:
-                #counter += 1
-                #ipd.clear_output(wait=True)
-                #print('Split ' +str(counter_folds) + ' de ' + str(kfold.n_splits) + '\n' +   'Usuário ' + str(counter) + ' de ' + str(len(u_reg)))
-                #import pdb;pdb.set_trace();
                 test_stream = data_stream.create(data=samples, genuine=usuario, internal=u_reg, external=u_nao_reg)
                 userBiometricModel = self.classifier.train_user_model(user_features=usersDatabase[usuario])
                 y_genuine, y_impostor, userBiometricModel = self.classifier.test(genuine_user=usuario, test_stream=test_stream,
                                                            user_model=userBiometricModel, decision_threshold=decision_threshold)
-
-                #import pdb;pdb.set_trace();
                 FMR, FNMR, B_acc = Metrics.report(y_genuine=y_genuine, y_impostor=y_impostor)
                 list_of_scores['FMR'].append(FMR)
                 list_of_scores['FNMR'].append(FNMR)
@@ -83,22 +79,19 @@ class RecognitionSystem():
         '''
 
     def fit(self, dataset=None, user_column='subject', metric=None, param_grid=None):
-        ''' Falta criar uma função 'validation' que retorna os idx dos usuarios genuinos e impostores.
-            Para cada 'p', executar com cada idx de validação.
-        ''' 
         
-        self._user_column = user_column
-        self._usuarios = dataset[self._user_column].unique()
-        self.list_params = list()
-        self.list_scores = list()
+        self._user_column = user_column # Variavel necessaria para separar os usuarios
+        self._usuarios = dataset[self._user_column].unique() # lista de usuarios
+        self.list_params = list() # lista de parametros
+        self.list_scores = list() # lista de scores
+        
         p = ParameterGrid(param_grid)
-
-        for i,params in enumerate(p):
-            if self.verbose==True:
+        for i,params in enumerate(p): # Para cada conjunto de parametros
+            if self.verbose==True:      # se verbose == True, imprimir parametros
                 print(params)
                 inic = time.time()
-            self.list_params.append(params)
-            FMR, FNMR, B_acc = self._run(dataset=dataset, **params)
+            self.list_params.append(params) # atualizando lista de parametros
+            FMR, FNMR, B_acc = self._run(dataset=dataset, **params) 
             self.list_scores.append([FMR, FNMR, B_acc])
             if self.verbose==True:
                 fim = time.time()-inic
