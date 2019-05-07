@@ -1,17 +1,16 @@
 import pandas as pd
+import numpy as np
+import random
+import math
 from sklearn.metrics import classification_report, confusion_matrix 
+from abc import ABC, abstractmethod
+from classifiers import M2005Classifier, EuclidianClassifier
 
-class DBCreator():
-    '''
-    Classe para separar os usuários, dados e variaveis que serão salvas em um banco de dados para utilização do sistema de reconhecimento.
-    '''
-    def __init__(self, dataset=None):
-        '''parameters:
-            - dataset: pandas.DataFrame
-        '''
-        self._dataset = dataset
-    
-    def create_db(self, user_column=None, n=None, users=None):
+class Enrollment:
+    def __init__(self):
+        pass
+
+    def create(self, dataset=None, n_amostras=None, users_list=None, classifier=None, normalize=None):
         '''
         parameters:
             - user_column (str): coluna do dataset que indica o usuário
@@ -22,143 +21,235 @@ class DBCreator():
             - banco de dados (dict) com as informações de cada usuário e;
             - pandas.Dataframe das observações não utilizadas que poderão ser usadas no criação do fluxo de dados de teste
         '''
+        valid = Validation(classifier=classifier, normalize=normalize) # objeto para validadar linha de decisao usada na etapa de teste
         user_information = {} #dicionário em que serão salvas as informações de cada usuário registrado
         index_used_in_db = list() #lista de indices das observações salvas no banco de dados
-        for us in users: #para cada usuário no dataset enviado
-            temp = self._dataset[self._dataset[user_column] == us] #separar as observações do usuário
-            user_information[us] = temp.iloc[:n] #salvar as n primeiras observações no dicionário
-            index_used_in_db = index_used_in_db + user_information[us].index.tolist() #guardar os indices utilizados
+        for user in users_list: #para cada usuário no dataset enviado
+            temp = dataset[dataset['subject'] == user] #separar as observações do usuário
+            user_information[user] = temp.iloc[:n_amostras] #salvar as n primeiras observações no dicionário
+            index_used_in_db = index_used_in_db + user_information[user].index.tolist() #guardar os indices utilizados
         
-        data_not_used = self._dataset.drop(self._dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas
-        return user_information, data_not_used
-        
-class FeatureExtractor():
-    '''
-    Classe que extrai características (traços biométricos) de um conjunto de variáveis.
-    '''
-    def __init__(self):
-        pass
-    
-    def create_feat(self, dataset=None, method='M2005', ignored_columns=None):
-        '''
-        parameters:
-            - dataset (pandas.Dataframe): banco de dados com informações de usuários
-            - method (str): método de extração
-            - ignored_columns (list): colunas do dataset que devem ser ignoradas
-        
-        return:
-            - banco de dados (dict) de traços biométricos de cada usuário registrado 
-        '''
-        biometricFeatures = dict() 
-        if method=='M2005':
-            biometricFeatures = classification.M2005_FE(dataset=dataset, ignored_columns=ignored_columns)
-            return biometricFeatures
-        
-class DataStream():
-    '''
-    Class que cria o fluxo de dados utilizado para testes.
-    '''
-    def __init__(self, impostor_rate=0.5, rate_external_impostor=0.5):
-        self.__impostor_rate = impostor_rate # taxa de impostores
-        self.__rate_external_impostor = rate_external_impostor # dos impostores no fluxo, define quantos são externos
-    
-    def create(self, data=None, genuine=None, internal=None, external=None):
-        '''
-        parameters:
-            - data (pandas.Dataframe): amostras para serem usadas no fluxo de dados biométricos
-            - genuine (str): id do usuário genuino
-            - internal (list): id dos usuários registrados
-            - external (list): id dos usuários nao registrados
-        
-        return:
-            - dataStream (pandas.Dataframe): fluxo de dados biométricos
-        '''
-        genuine_samples = data[data['subject']==genuine] # separando amostras genuínas;
-        in_samples = data[data['subject'].isin(internal)] # separando amostras de usuários registrados
-        int_imp_samples = in_samples[in_samples['subject'] != genuine] # com exceção do usuário genuino;
-        ext_imp_samples = data[data['subject'].isin(external)] # separando amostras de usuários não registrados
-        
-        # separando o número de amostras que serão utilizadas no fluxo
-        #import pdb; pdb.set_trace();
-        n_impostor = int((len(genuine_samples) * (1-self.__impostor_rate)) / self.__impostor_rate)
-        n_internal_imp = int(n_impostor * (1-self.__rate_external_impostor))
-        n_external_imp = n_impostor - n_internal_imp
-        
-        # enviando amostras aleatórias de cada usuário para a criação do fluxo
-        dataStream = sampling.random(genuine_samples=genuine_samples,
-                                    internal_samples=int_imp_samples.iloc[:n_internal_imp],
-                                    external_samples=ext_imp_samples.iloc[:n_external_imp])
-        return dataStream
+        users_decision_threshold = valid.run(usersData=user_information)
+        data_not_used = dataset.drop(dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas
+        return user_information, data_not_used, users_decision_threshold
 
-class sampling():
-    '''
-    Class que reproduz a forma de amostragem do fluxo de dados
-    '''
-    def random(genuine_samples=None, internal_samples=None, external_samples=None):
+class Validation:
+    def __init__(self, classifier, normalize):
+        self.train = eval(classifier+'Classifier')(name=classifier, normalize=normalize, adaptive=False)
+        self.model = classifier
+
+    def run(self, usersData):
+        '''Parameters:
+        usersData - dicionário em que .key() é o usuário e .values() as amostras desse usuario que devem ser utilizadas no cadastramento
+
+
+        Return:
+        threshold_dict - dicionario em que .key() é o usuário e .values() a melhor linha de decisão os dados de treinamento vistos.
         '''
-        parameters:
-            - Recebe amostras genuínas e impostoras
-        return:
-            - dataStream
-        '''
-        d = [genuine_samples, internal_samples, external_samples]
-        dataStream = pd.concat(d) #concatenando os dados
-        dataStream = dataStream.sample(frac=1).reset_index(drop=True) #reordenando aleatóriamente
-        return dataStream
-    
-class classification():
-    def M2005_FE(dataset=None, ignored_columns=None):
-        features = dict()
-        for user in dataset.keys():
-            usft = dict()
-            data = dataset[user]
-            try:
-                data=data.drop(ignored_columns, axis=1)
-            except:
-                pass
-            for feature in data:
-                lower = min(data[feature].mean(), data[feature].median()) * (0.95 - (data[feature].std() / data[feature].mean()))
-                upper = max(data[feature].mean(), data[feature].median()) * (1.05 - (data[feature].std() / data[feature].mean()))
-                usft[feature] = (lower, upper)
-            features[user] = usft
-        return features
-    
-    def M2005(genuineUser=None, dataStream=None, biometricsDatabase=None, decision_threshold=0.00):
-        y_true = list()
-        y_pred = list()
-        list_of_scores = list()
+
+        thresholds_dict = dict()
+        first = True
+        for user in usersData.keys(): #Para cada usuario no banco
+            treino = usersData[user][:20] 
+            modelo = self.train.train_user_model(treino) #treinar um modelo 
+            impostor_users = np.setdiff1d([*usersData] , user)
+            for iu in impostor_users:
+                if first == True:
+                    impostor_data = pd.DataFrame(usersData[iu][:40])
+                    first = False
+                else:
+                    impostor_data = pd.concat([impostor_data, usersData[iu][:40]], axis=0, ignore_index=True)
+            impostor_data  = impostor_data.sample(20, replace=False).reset_index(drop=True) #sorteio de 20 amostras aleatorias dentre todas as possíveis          
+            
+            # Gerando scores para fluxo genuino e impostor
+            if self.model == 'Euclidian':
+                scoreType='distance'
+                genuineScores = self.euclidian_score(modelo.model, usersData[user][20:40])
+                impostorScores = self.euclidian_score(modelo.model, impostor_data.loc[:,impostor_data.columns!='subject'])
+            elif self.model == 'M2005':
+                scoreType='similarity'
+                genuineScores = self.M2005_score(modelo.model, usersData[user][20:40])
+                impostorScores = self.M2005_score(modelo.model, impostor_data.loc[:,impostor_data.columns!='subject'])
+            decision = self.calculate_best_threshold(userScores=genuineScores, impostorScores=impostorScores, scoreType=scoreType)
+            thresholds_dict[user] = decision
+        return thresholds_dict
+
+    def euclidian_score(self, user_model, test_stream):
+        try:
+            test_stream=test_stream.drop('subject', axis=1)
+        except:
+            pass
+
+        p = user_model.shape[0]
+        if ((test_stream.shape[1]) !=p):
+            raise Exception("Numero de features diferente")
         
-        for index, row in dataStream.iterrows():
-            if (row['subject'] == genuineUser):
-                y_true.append('genuine')
-            else:
-                y_true.append('impostor')
+        scores =list()
+        for _, row in test_stream.iterrows():
+            score = np.sqrt(sum((row - user_model)**2))
+            scores.append(score)
+        return scores
+
+    def M2005_score(self, user_model, test_stream):
+        try:
+            test_stream=test_stream.drop('subject', axis=1)
+        except:
+            pass
+
+        scores = list()
+        for _, row in test_stream.iterrows():
             match_sum = 0
             previousDimMatched = False
-            for dim in biometricsDatabase[genuineUser].keys():
-                if (row[dim] < biometricsDatabase[genuineUser][dim][1]) & (row[dim] > biometricsDatabase[genuineUser][dim][0]):
+            for dim in user_model.keys():
+                if (row[dim] >= user_model[dim][0]) and (row[dim] <= user_model[dim][1]):
                     if previousDimMatched:
                         match_sum = match_sum + 1.5
                     else:
-                        match_sim = match_sum + 1.0
+                        match_sum = match_sum + 1.0
                     previousDimMatched = True
                 else:
                     previousDimMatched = False
-            max_sum = 1.0 + 1.5 * (len(biometricsDatabase[genuineUser].keys()) -1)
-            score = match_sum/max_sum
-            if score > decision_threshold:
-                y_pred.append('genuine')
-            else:
-                y_pred.append('impostor')
-            list_of_scores.append(score)
-        FNMR, FMR, B_acc = classification.report_metrics(y_true=y_true, y_pred=y_pred)
-        return FNMR, FMR, B_acc, list_of_scores
-    
-    def report_metrics(y_true=None, y_pred=None):
-        #import pdb; pdb.set_trace();
-        cm = confusion_matrix(y_true, y_pred, labels=['genuine','impostor'])
-        FNMR = cm[1,0] / (cm[0,0] + cm[1,0])
-        FMR = cm[0,1] / (cm[0,1] + cm[1,1])
-        B_acc = 1 - ((FNMR + FMR)/2)
-        metrics = {'FNMR' : FNMR, 'FMR' : FMR, 'B_acc' : B_acc}
-        return FNMR, FMR, B_acc
+            max_sum = 1.0 + 1.5 * (len(user_model.keys()) -1)
+            scores.append(match_sum/max_sum)
+        return scores
+
+    def reporter(self, scores, true_labels, decision, scoreType):
+        y_genuine = list()
+        y_impostor = list()
+        if (scoreType=='distance'):
+            for i, score in enumerate(scores):
+                if (score < decision): #classifiquei como positivo
+                    if (true_labels[i] == 1):
+                        y_genuine.append(1)
+                    else:
+                        y_impostor.append(1)
+                else:
+                    if (true_labels[i] == 1):
+                        y_genuine.append(0)
+                    else:
+                        y_impostor.append(0)
+        else:
+             for i, score in enumerate(scores):
+                if (score > decision): #classifiquei como positivo
+                    if (true_labels[i] == 1):
+                        y_genuine.append(1)
+                    else:
+                        y_impostor.append(1)
+                else:
+                    if (true_labels[i] == 1):
+                        y_genuine.append(0)
+                    else:
+                        y_impostor.append(0)
+                 
+        FNMR = 1- sum(y_genuine) / len(y_genuine)
+        FMR = sum(y_impostor) / len(y_impostor)
+        BAcc = 1- (FNMR + FMR)/2
+        return FMR, FNMR, BAcc
+
+    def calculate_best_threshold(self, userScores, impostorScores, scoreType):
+        predictions = userScores + impostorScores
+        labels = np.concatenate((np.ones(len(userScores)), np.zeros(len(impostorScores))))
+        
+        best_BAcc = -float("inf")
+        for score in predictions:
+            _, _, BAcc = self.reporter(scores=predictions, true_labels=labels, decision=score, scoreType=scoreType)
+            if BAcc > best_BAcc:
+                best_BAcc = BAcc
+                decision = score
+                
+        return decision
+
+class DataStream(ABC):
+    def __init__(self, impostor_rate, rate_external_impostor, len_attacks=None):
+        self.impostor_rate = impostor_rate # taxa de impostores
+        self.rate_external_impostor = rate_external_impostor # dos impostores no fluxo, define quantos são externos
+        self._len_attacks = len_attacks
+        super().__init__()
+
+    def _extract_datasets(self, data, genuine, internal, external):
+        genuine_samples = data[data['subject']==genuine] # fluxo de dados genuinos;
+        in_samples = data[data['subject'].isin(internal)] # fluxo de dados de usuarios cadastrados
+        int_imp_samples = in_samples[in_samples['subject'] != genuine] # com exceção do usuário genuino;
+        ext_imp_samples = data[data['subject'].isin(external)] # fluxo de dados de usuarios externos
+        
+        # separando o número de amostras que serão utilizadas no fluxo
+        n_impostor = int((len(genuine_samples) * self.impostor_rate) / (1-self.impostor_rate))
+        n_internal_imp = int(n_impostor * (1-self.rate_external_impostor))
+        n_external_imp = n_impostor - n_internal_imp
+
+        internal_samples=int_imp_samples.iloc[:n_internal_imp]
+        external_samples=ext_imp_samples.iloc[:n_external_imp]
+        impostor_samples = pd.concat([internal_samples, external_samples], axis=0, ignore_index=True)
+
+        # retorna um fluxo de dados genuinos e um fluxo de dados impostores
+        return genuine_samples, impostor_samples
+        
+    def _extrai(self, df1):
+        ##
+        # Retorna o primeiro elemento do dataframe e exclui o elemento
+         
+        a = df1.values.tolist()[0]
+        df1.drop(df1.index[0], inplace=True)
+        return a
+
+    @abstractmethod
+    def create(self):
+        pass
+
+class Random(DataStream):
+    def create(self, data=None, genuine=None, internal=None, external=None):
+        genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
+        l_ds = list() # lista binária. 1 == amostra genuina; 0 == amostra impostora; 
+        if type(genuine_samples) != None:
+            b = np.ones(len(genuine_samples)).tolist()
+            l_ds.extend(b)
+            c = genuine_samples.columns
+            genuine_samples = genuine_samples.reset_index(drop=True)
+        if type(impostor_samples) != None:
+            b = np.zeros(len(impostor_samples)).tolist()
+            l_ds.extend(b)
+            c = impostor_samples.columns
+            impostor_samples = impostor_samples.reset_index(drop=True)
+
+        random.Random(42).shuffle(l_ds) #Embaralha a a lista binária
+        datastream = list()
+        
+        for i in l_ds:
+            if i == 1:
+                datastream.append(self._extrai(genuine_samples))
+                genuine_samples = genuine_samples.reset_index(drop=True)
+            if i == 0:
+                datastream.append(self._extrai(impostor_samples))
+                impostor_samples = impostor_samples.reset_index(drop=True)
+
+        datastream = pd.DataFrame(datastream, columns=c)
+        return datastream
+
+class GenFirst(DataStream):
+    def create(self, data=None, genuine=None, internal=None, external=None):
+        genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
+        frames = [genuine_samples, impostor_samples]
+        return pd.concat(frames, ignore_index=True)
+
+class ImpFirst(DataStream):
+    def create(self, data=None, genuine=None, internal=None, external=None):
+        genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
+        frames = [impostor_samples, genuine_samples]
+        return pd.concat(frames, ignore_index=True)
+
+class SeriesAttack(DataStream):
+    def create(self, data=None, genuine=None, internal=None, external=None):
+        genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
+        n_series = math.ceil(len(impostor_samples) / self._len_attacks)
+        lenG = math.ceil(len(genuine_samples)/n_series)
+        ds = list()
+        for i in range(n_series):
+            i_idx = i*self._len_attacks
+            g_idx = i*lenG
+            try:
+                ds.append(impostor_samples[i_idx:i_idx+self._len_attacks])
+                ds.append(genuine_samples[g_idx:g_idx+lenG])
+            except:
+                ds.append(impostor_samples[i_idx:])
+                ds.append(genuine_samples[g_idx:])
+        return pd.concat(ds, ignore_index=True)
