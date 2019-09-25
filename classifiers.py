@@ -1,14 +1,93 @@
 from abc import ABC, abstractmethod
 from sklearn.svm import OneClassSVM
 from sklearn.base import BaseEstimator
+from sklearn.ensemble import RandomForestClassifier
 import pandas as pd
 import numpy as np
+import time
+
+#####################################################################################################
+#####################################################################################################
+
+# Create classes for template user models
+class UserModel(ABC):
+    def __init__(self, features):
+        self.features = features
+        super().__init__()
+
+    @abstractmethod
+    def update(self, model=None):
+        pass
+
+class EuclidianUserModel(UserModel):
+    def update(self, model):
+        self.model = model
+
+class ManhattanUserModel(UserModel):
+    def update(self, model):
+        self.model = model
+
+class M2005UserModel(UserModel):
+    def update(self, model):
+        self.model = model
+
+class OCSVMUserModel(UserModel):
+    '''Aqui o modelo é um objeto do tipo OneClassSVM
+    '''
+    def __init__(self, features):
+        self.features = features
+        self.model = OneClassSVM()
+
+    def update(self):
+        self.model.fit(self.features)
+
+class MahalanobisUserModel(UserModel):
+    def __init__(self, features):
+        self.features = features
+        self.model = {'Mean': None, 'InvCov' : None}
+    
+    def update(self, model):
+        self.model = model
+
+class NeuralNetworkUserModel(UserModel):
+    def update(self, model):
+        self.model = model
+
+#######################################################################################################
+#######################################################################################################
+        
 
 class ClassificationAlgorithm(ABC):
+    '''Classe "mãe" para os algoritmos de classificação utilizados.
+
+    Parameters:
+    \t name: nome do classificador.
+    \t adaptive: tipo de estratégia de adaptação utilizada. Caso use alguma.
+    \t normalize: se True os dados de treino e teste serão normalizados.
+    \t parameters: ** Nao sei onde é utilizado **
+
+    Methods:
+    \t ** train_user_model **
+    \t - Parameters:
+    \t\t data: dados do usuário
+
+    \t - Return: um objeto do tipo "userModel"
+
+    \t ** test **
+    \t - Parameters:
+    \t\t data: dados do usuário
+
+    \t - Return: (1) vetor binário de classificação das amostras de teste genuínas; 
+    (2) vetor binário de classificação das amostras de teste impostoras;
+    (3) objeto do tipo "userModel".
+
+    
+
+    '''
  
     def __init__(self, name, adaptive, normalize, parameters=dict()):
         self.name = name
-        self.adaptive = adaptive # [None,'GW','SW','DP']
+        self.adaptive = adaptive # [None,'GrowingWindow','SlidingWindow','DoubleParallel']
         self.normalize = normalize
         self.parameters = parameters
         super().__init__()
@@ -21,10 +100,10 @@ class ClassificationAlgorithm(ABC):
     def test(self, data):
         pass
 
-# Create classes for classification algorithms
-        
-class EuclidianClassifier(ClassificationAlgorithm):
-    def train_user_model(self, user_features=None):
+#######################################################################################################
+
+class ManhattanClassifier(ClassificationAlgorithm):
+    def train_user_model(self, user_features):
         try:
             user_features=user_features.drop('subject', axis=1)
         except:
@@ -36,18 +115,60 @@ class EuclidianClassifier(ClassificationAlgorithm):
                 self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
                 user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
 
-        #len_features = user_features.shape[0]
-        #for feature in user_features:
-        #    centroids.append(np.sum(user_features[feature] / len_features))
-        #for _, row in user_features.iterrows():
-        #    distance_train.append(np.sqrt(sum((row-centroids)**2)))
-        #average_distance = np.mean(distance_train)
-        #std_distance = np.std(distance_train)
-        
         model = user_features.mean()
+        user_model = ManhattanUserModel(features=user_features)
+        user_model.update(model=model)
+        return user_model
+    
+    def test(self, genuine_user, test_stream, user_model, decision_threshold, validation=False):
+        list_of_scores = list()
+        y_genuino = list()
+        y_impostor = list()
+        y_true = test_stream.loc[:, 'subject']
+        test_stream=test_stream.drop('subject', axis=1)
+
+        if self.normalize==True:
+            for col in test_stream.columns:
+                test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
+
+        for i, row in test_stream.iterrows():
+            score = np.sqrt(sum(abs(row - user_model.model)))
+            if (score < decision_threshold[genuine_user]):
+                if (y_true[i] == genuine_user):
+                    y_genuino.append(1)
+                    if self.adaptive != False: # ATUALIZAR O MODELO
+                        ini = time.time()
+                        AS = AdaptiveStrategy(trainFunction= ManhattanClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                        userModel= user_model, newData=row)
+                        user_model = AS.run(strategy=self.adaptive)
+                        print("adaptacao: {}".format((time.time() - ini)/60))
+
+                else:
+                    y_impostor.append(1)
+            else:
+                if (y_true[i] == genuine_user):
+                    y_genuino.append(0)
+                else:
+                    y_impostor.append(0)
+            list_of_scores.append(score)
+        return y_genuino, y_impostor, user_model
+
+class EuclidianClassifier(ClassificationAlgorithm):
+    def train_user_model(self, user_features):
+        try:
+            user_features=user_features.drop('subject', axis=1)
+        except:
+            pass
         
+        if (self.normalize==True):
+            self._normalize_params = dict()
+            for col in user_features:
+                self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
+                user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
+
+        model = user_features.mean()
         user_model = EuclidianUserModel(features=user_features)
-        user_model.init(model=model)
+        user_model.update(model=model)
         return user_model
 
     def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, validation=False):
@@ -68,6 +189,58 @@ class EuclidianClassifier(ClassificationAlgorithm):
                     y_genuino.append(1)
                     if self.adaptive != False: # ATUALIZAR O MODELO
                         AS = AdaptiveStrategy(trainFunction= EuclidianClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                        userModel= user_model, newData=row)
+                        user_model = AS.run(strategy=self.adaptive)
+
+                else:
+                    y_impostor.append(1)
+            else:
+                if (y_true[i] == genuine_user):
+                    y_genuino.append(0)
+                else:
+                    y_impostor.append(0)
+            list_of_scores.append(score)
+        return y_genuino, y_impostor, user_model
+
+
+class MahalanobisClassifier(ClassificationAlgorithm):
+    def train_user_model(self, user_features=None, normalize=False):
+        try:
+            user_features=user_features.drop('subject', axis=1)
+        except:
+            pass
+        
+        if (self.normalize==True):
+            self._normalize_params = dict()
+            for col in user_features:
+                self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
+                user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
+
+        user_model = EuclidianUserModel(features=user_features)
+        mean = user_features.mean().values
+        inverse_cov_matriz = np.linalg.inv(np.cov(user_features, rowvar=False))
+        model = {'Mean': mean, 'InvCov' : inverse_cov_matriz}
+        user_model.update(model=model)
+        return user_model
+
+    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=0.00, normalize=False):
+        list_of_scores = list()
+        y_genuino = list()
+        y_impostor = list()
+        y_true = test_stream.loc[:, 'subject']
+        test_stream=test_stream.drop('subject', axis=1)
+
+        if self.normalize==True:
+            for col in test_stream.columns:
+                test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
+
+        for i, row in test_stream.iterrows():
+            score = np.sqrt(np.dot(np.dot(row-user_model.model['Mean'], user_model.model['InvCov']), row-user_model.model['Mean'])**2)
+            if (score < decision_threshold[genuine_user]):
+                if (y_true[i] == genuine_user):
+                    y_genuino.append(1)
+                    if self.adaptive != False: # ATUALIZAR O MODELO
+                        AS = AdaptiveStrategy(trainFunction= MahalanobisClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
                         userModel= user_model, newData=row)
                         user_model = AS.run(strategy=self.adaptive)
 
@@ -107,14 +280,14 @@ class M2005Classifier(ClassificationAlgorithm):
         list_of_scores = list()
         y_genuino = list()
         y_impostor = list()
-        y_true = test_stream.loc[:, 'subject']
+        y_true = test_stream.loc[:, 'subject'].tolist()
         test_stream=test_stream.drop('subject', axis=1)
-
+        max_sum = 1.0 + 1.5 * (len(user_model.model.keys()) -1)
+            
         if (normalize==True):
             for col in test_stream.columns:
                 test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
-
-        #import pdb;pdb.set_trace();
+        
         for i, row in test_stream.iterrows():
             match_sum = 0
             previousDimMatched = False
@@ -128,10 +301,8 @@ class M2005Classifier(ClassificationAlgorithm):
                 else:
                     previousDimMatched = False
             #import pdb;pdb.set_trace();
-            max_sum = 1.0 + 1.5 * (len(user_model.model.keys()) -1)
             score = match_sum/max_sum
 
-            
             if (score > decision_threshold[genuine_user]):
                 if (y_true[i] == genuine_user):
                     y_genuino.append(1)
@@ -149,35 +320,105 @@ class M2005Classifier(ClassificationAlgorithm):
             list_of_scores.append(score)
         return y_genuino, y_impostor, user_model
 
-# Create classes for template user models
-class UserModel(ABC):
-    def __init__(self, features):
-        self.features = features
-        super().__init__()
-
-    @abstractmethod
-    def update(self, model=None):
-        pass
-
-class EuclidianUserModel(UserModel):
-    def init(self, model):
-        self.model = model
-
-    def update(self):
-        pass
+class OCSVMClassifier(ClassificationAlgorithm):
+    def train_user_model(self,  user_features=None, normalize=False):
+        try:
+            user_features=user_features.drop('subject', axis=1)
+        except:
+            pass
         
-class M2005UserModel(UserModel):
-    def update(self, model):
-        self.model = model
+        if (normalize==True):
+            self._normalize_params = dict()
+            for col in user_features:
+                self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
+                user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
+
+        user_model_object = OCSVMUserModel(features=user_features)
+        user_model_object.update()
+        return user_model_object
+
+    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, validation=False, normalize=False):
+        list_of_scores = list()
+        y_genuino = list()
+        y_impostor = list()
+        y_true = test_stream.loc[:, 'subject']
+        test_stream=test_stream.drop('subject', axis=1)
+
+        if normalize==True:
+            for col in test_stream.columns:
+                test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
+
+        for i, row in test_stream.iterrows():
+            score = user_model.model.decision_function(row.values.reshape(1,-1))
+            if (score < decision_threshold[genuine_user]):
+                if (y_true[i] == genuine_user):
+                    y_genuino.append(1)
+                    if self.adaptive != False: # ATUALIZAR O MODELO
+                        AS = AdaptiveStrategy(trainFunction= OCSVMClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                        userModel= user_model, newData=row)
+                        user_model = AS.run(strategy=self.adaptive)
+
+                else:
+                    y_impostor.append(1)
+            else:
+                if (y_true[i] == genuine_user):
+                    y_genuino.append(0)
+                else:
+                    y_impostor.append(0)
+            list_of_scores.append(score)
+        return y_genuino, y_impostor, user_model
+
+class RandForestClassifier(ClassificationAlgorithm):
+    def train_user_model(self, user_features=None, normalize=False):
+        try:
+            user_features=user_features.drop('subject', axis=1)
+        except:
+            pass
+
+        #user_model_object = OCSVMUserModel(features=user_features)
+        user_model_object = RandomForestClassifier()
+        user_model_object.update()
+        return user_model_object
+
+    def test(self):
+        pass
+
+class NeuralNetworkClassifier(ClassificationAlgorithm):
+    def train_user_model(self):
+        pass
+
+    def test(self):
+        pass
+#######################################################################################################
+#######################################################################################################
 
 class AdaptiveStrategy:
+    ''' Métodos adaptativos.
+
+    Parameters:
+    \t trainFunction: uma função de treinamento.
+    \t userModel: o modelo do usuário mais atual.
+    \t newData: dado utilizado para atualizar o modelo do usuário.
+
+    Return:
+    \t Modelo do usuário atualizado.
+
+    '''
     def __init__(self, trainFunction, userModel, newData):
         self.trainFunction = trainFunction
         self.userModel = userModel
         self.newData = newData
         
     def run(self, strategy):
-        eval('self._' + strategy)()
+        #eval('self._' + strategy)()
+        if strategy == 'GrowingWindow':
+            self._GrowingWindow()
+        elif strategy == 'SlidingWindow':
+            self._SlidingWindow()
+        elif strategy == '_DoubleParallel':
+            raise Exception("Nao esta pronto ainda")
+        else:
+            raise Exception("Escolha uma estratégia de adaptação válida!")
         return self.new_model
 
     def _GrowingWindow(self):
@@ -192,6 +433,9 @@ class AdaptiveStrategy:
 
     def _DoubleParallel(self):
         pass
+
+#######################################################################################################
+#######################################################################################################
 
 
 # metrics class

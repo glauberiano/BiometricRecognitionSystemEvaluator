@@ -5,10 +5,9 @@ Classe principal:
     * Em um sistema de reconhecimento padrão, o sistema cria um modelo para todos os usuários
 '''
 
-from components import Enrollment, Validation
+from components import Enrollment, FindThreshold
 from components import Random, GenFirst, ImpFirst, SeriesAttack
-from classifiers import M2005Classifier
-from classifiers import EuclidianClassifier
+from classifiers import M2005Classifier, EuclidianClassifier, ManhattanClassifier, OCSVMClassifier, MahalanobisClassifier
 from classifiers import Metrics
 import pandas as pd
 import numpy as np
@@ -19,13 +18,20 @@ import IPython.core.display as ipd
 from sklearn.model_selection import KFold
 from sklearn.model_selection import ParameterGrid
 
-class RecognitionSystem():
-    def __init__(self,  verbose=False, save_results=False, filename=None):
-        if (save_results == True) and (filename==None):
-            raise Exception("Se deseja salvar os resultados, defina um nome em filename")
+class RecognitionSystem:
+    def __init__(self,  verbose=False, save_results=False, filename=None, random_state=True):
+        #if (save_results == True) and (filename==None):
+        #    raise Exception("Se deseja salvar os resultados, defina um nome em filename")
         self.save_results = save_results
-        self.filename = filename
+        #self.filename = filename
         self.verbose = verbose
+        self.random_state = np.random.RandomState(seed=42)
+
+    @staticmethod
+    def check_len_test_stream(y_true, impostor_rate, genuine_user):
+        len_impostor = sum(y_true!=genuine_user) / len(y_true)
+        if (len_impostor > impostor_rate) or (len_impostor < impostor_rate-0.2):
+            raise Exception("ERROOOO! len_impostor: {}, impostor_rate {}".format*(len_impostor, impostor_rate))
         
     def __validation(self, method='users_kfold', n_splits=5, list_users=None):
         if method=='users_kfold':
@@ -33,7 +39,7 @@ class RecognitionSystem():
             return kfold.split(list_users)
     
     def _run(self, dataset=None, method=None, model_size=None, impostor_rate=0.5, rate_external_impostor=0,
-                         sampling='Random', len_attacks=None, normalize=False, adaptive=None):
+                         sampling='Random', len_attacks=None, normalize=False, adaptive=None, base=None):
         
         '''
         Funcao: executar o sistema!
@@ -42,35 +48,53 @@ class RecognitionSystem():
         '''
 
 
-        assert method in ['M2005', 'Euclidian'], 'method must be on of \'M2005\', \'Euclidian\''
+        assert method in ['M2005', 'Euclidian', 'Manhattan', 'OCSVM', 'Mahalanobis'], 'method must be on of \'M2005\', \'Euclidian\', \'Manhattan\', \'OCSVM\''
         self.classifier = eval(method+'Classifier')(name=method, normalize=normalize, adaptive=adaptive)
         
         list_of_scores = {'FMR' : list(),
                           'FNMR' : list(),
                           'B_acc' :  list()}
 
+        #list_test = list()
         # data_stream: objeto que guarda configurações de como será construido o fluxo de dados no teste.
-        data_stream = eval(sampling)(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor, len_attacks=len_attacks)
+        data_stream = eval(sampling)(impostor_rate=impostor_rate, rate_external_impostor=rate_external_impostor, len_attacks=len_attacks, random_state=self.random_state)
         
         # splitTrainTest: objeto que separa os indexes dos usuários de modo que possamos validar os resultados com amostras genuinas e impostoras
         splitTrainTest = Enrollment()
         kfold = KFold(n_splits=5)
         splits = kfold.split(self._usuarios)
         
+        # KFold para validar os resultados: k = 3
+
         for internal_idx, external_idx in splits:
             u_reg = self._usuarios[internal_idx]
             u_nao_reg = self._usuarios[external_idx]
-            usersDatabase, samples, decision_threshold = splitTrainTest.create(dataset=dataset, n_amostras=model_size, users_list=u_reg, classifier=method, normalize=normalize)
+            #import pdb; pdb.set_trace();
+            usersDatabase, samples, decision_threshold = splitTrainTest.create(dataset=dataset, n_amostras=model_size, users_list=u_reg, classifier=method, normalize=normalize, random_state=self.random_state)
             
             for usuario in u_reg:
+                #print(usuario)
+                #ini = time.time()
                 test_stream = data_stream.create(data=samples, genuine=usuario, internal=u_reg, external=u_nao_reg)
+                RecognitionSystem.check_len_test_stream(y_true=test_stream['subject'], impostor_rate=impostor_rate, genuine_user=usuario)
+                #print("Create time: {}".format((time.time() - ini)/60))
+                #import pdb; pdb.set_trace();
+        
+                #ini = time.time()
                 userBiometricModel = self.classifier.train_user_model(user_features=usersDatabase[usuario])
+                #print("train time: {}".format((time.time() - ini)/60))
+                
+                #ini = time.time()
                 y_genuine, y_impostor, userBiometricModel = self.classifier.test(genuine_user=usuario, test_stream=test_stream,
                                                            user_model=userBiometricModel, decision_threshold=decision_threshold)
+                #print("test time: {}".format((time.time() - ini)/60))
+                import pdb; pdb.set_trace();
                 FMR, FNMR, B_acc = Metrics.report(y_genuine=y_genuine, y_impostor=y_impostor)
+                #list_test.append((test_stream, userBiometricModel.model, y_genuine, y_impostor, decision_threshold))
                 list_of_scores['FMR'].append(FMR)
                 list_of_scores['FNMR'].append(FNMR)
                 list_of_scores['B_acc'].append(B_acc)
+                
         return list_of_scores['FMR'], list_of_scores['FNMR'], list_of_scores['B_acc']
     
     def _assert_params(self,parameters):
@@ -99,8 +123,10 @@ class RecognitionSystem():
 
         if self.save_results == True:
             df = self.summary(parameters=self.list_params, metrics=self.list_scores)
-            self.save(dataframe=df, filename=(self.filename+'.csv'))
-            
+            if os.path.exists("resultados") == False:
+                os.mkdir('resultados')
+            df.to_csv('resultados/'+params['base']+'_'+params['method']+'.csv', index=False)
+
     def summary(self, parameters = None, metrics = None):
         list_scores=list()
         for i in range(len(metrics)):
@@ -115,8 +141,3 @@ class RecognitionSystem():
         df2 = pd.DataFrame(list_scores)
         frames = [df1, df2]
         return pd.concat(frames, axis=1)
-    
-    def save(self, dataframe, filename):
-        if os.path.exists("resultados") == False:
-            os.mkdir('resultados')
-        dataframe.to_csv(os.path.join('resultados',filename))
