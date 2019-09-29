@@ -26,13 +26,13 @@ class Enrollment:
         user_information = {} #dicionário em que serão salvas as informações de cada usuário registrado
         index_used_in_db = list() #lista de indices das observações salvas no banco de dados
         for user in users_list: #para cada usuário no dataset enviado
-            temp = dataset[dataset['subject'] == user].reset_index(drop=True) #separar as observações do usuário
-            user_information[user] = temp.iloc[:n_amostras] #salvar as n primeiras observações no dicionário
+            temp = dataset[dataset['subject'] == user].reset_index(drop=True) #separar as observações de cada usuário
+            user_information[user] = temp.iloc[:n_amostras] #salvar as n primeiras observações para encontrar o melhor threshold
             index_used_in_db = index_used_in_db + user_information[user].index.tolist() #guardar os indices utilizados
         
-        import pdb;pdb.set_trace();
-        users_decision_threshold = best_threshold.run(usersData=user_information)
-        data_not_used = dataset.drop(dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas
+        #import pdb;pdb.set_trace();
+        users_decision_threshold = best_threshold.run(usersData=user_information, model_size=n_amostras)
+        data_not_used = dataset.drop(dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas, para utilizar na etapa de teste
         return user_information, data_not_used, users_decision_threshold
 
 class FindThreshold:
@@ -46,7 +46,7 @@ class FindThreshold:
         self.model = classifier
         self.random_state = random_state
 
-    def run(self, usersData):
+    def run(self, usersData, model_size):
         '''Parameters:
         usersData - dicionário em que .key() é o usuário e .values() as amostras desse usuario que devem ser utilizadas no cadastramento
 
@@ -60,61 +60,82 @@ class FindThreshold:
         #import pdb; pdb.set_trace()
         #list_impostor_samples = list()
         
+        # Um usuario é definido como genuino, enquanto os outros são impostores
         for user in usersData.keys(): #Para cada usuario no banco
-            treino = usersData[user][:20] 
+            treino = usersData[user][:model_size//2] 
             user_model = self.train.train_user_model(treino) #treinar um modelo 
             impostor_users = np.setdiff1d([*usersData] , user)
+            #import pdb;pdb.set_trace()
             for iu in impostor_users:
                 if first == True:
-                    impostor_df = pd.DataFrame(usersData[iu][:40])
+                    impostor_df = pd.DataFrame(usersData[iu][:model_size])
                     first = False
                 else:
-                    impostor_df = pd.concat([impostor_df, usersData[iu][:40]], axis=0, ignore_index=True)
-            impostor_data  = impostor_df.sample(20, replace=False, random_state=self.random_state).reset_index(drop=True) #sorteio de 20 amostras aleatorias dentre todas as possíveis          
+                    impostor_df = pd.concat([impostor_df, usersData[iu][:model_size]], axis=0, ignore_index=True)
+            impostor_data  = impostor_df.sample(model_size//2, replace=False, random_state=self.random_state).reset_index(drop=True) #sorteio de 20 amostras aleatorias dentre todas as possíveis          
         
             # Gerando scores para fluxo genuino e impostor
-            import pdb; pdb.set_trace();
+            #import pdb; pdb.set_trace()
             if self.model == 'Euclidian':
                 scoreType = 'distance'
-                genuineScores = self.euclidian_score(user_model.model, usersData[user][20:40])
+                genuineScores = self.euclidian_score(user_model.model, usersData[user][model_size//2:model_size])
                 impostorScores = self.euclidian_score(user_model.model, impostor_data.loc[:,impostor_data.columns!='subject'])
                 #impostorScores = self.euclidian_score(user_model.model, list_impostor_samples)
             elif self.model == 'M2005':
                 scoreType = 'similarity'
-                genuineScores = self.M2005_score(user_model.model, usersData[user][20:40])
+                genuineScores = self.M2005_score(user_model.model, usersData[user][model_size//2:model_size])
                 impostorScores = self.M2005_score(user_model.model, impostor_data.loc[:,impostor_data.columns!='subject'])
             elif self.model == 'Manhattan':
                 scoreType = 'distance'
-                genuineScores = self.manhattan_score(user_model.model, usersData[user][20:40])
+                genuineScores = self.manhattan_score(user_model.model, usersData[user][model_size//2:model_size])
                 impostorScores = self.manhattan_score(user_model.model, impostor_data.loc[:,impostor_data.columns!='subject'])
             elif self.model == 'OCSVM':
                 scoreType = 'distance'
-                genuineScores = self.ocsvm_score(user_model, usersData[user][20:40])
+                genuineScores = self.ocsvm_score(user_model, usersData[user][model_size//2:model_size])
                 impostorScores = self.ocsvm_score(user_model, impostor_data.loc[:,impostor_data.columns!='subject'])
             elif self.model == 'Mahalanobis':
                 scoreType = 'distance'
-                genuineScores = self.mahalanobis_score(user_model, usersData[user][20:40])
+                #genuineScores = self.mahalanobis_score(user_model, usersData[user][20:40])
+                genuineScores = self.mahalanobis_score(user_model, usersData[user][model_size//2:model_size])
                 impostorScores = self.mahalanobis_score(user_model, impostor_data.loc[:,impostor_data.columns!='subject'])
             
-            #import pdb; pdb.set_trace();
-            decision_threshold = self.calculate_best_threshold(userScores=genuineScores, impostorScores=impostorScores, scoreType=scoreType)
+            decision_threshold = self.calculate_best_threshold(user_scores=genuineScores, impostor_scores=impostorScores, scoreType=scoreType)
             thresholds_dict[user] = decision_threshold
-            #decision_list.append(self.calculate_best_threshold(userScores=genuineScores, impostorScores=impostorScores, scoreType=scoreType))
-            #import pdb; pdb.set_trace();
-            #thresholds_dict[user] = np.mean(decision_list)
         return thresholds_dict
     
-    def calculate_best_threshold(self, userScores, impostorScores, scoreType):
-        predictions = userScores + impostorScores
-        labels = np.concatenate((np.ones(len(userScores)), np.zeros(len(impostorScores))))
-        best_BAcc = -float("inf")
+    def calculate_best_threshold(self, user_scores, impostor_scores, scoreType):
+        predictions = user_scores + impostor_scores
+        labels = np.concatenate((np.ones(len(user_scores)), np.zeros(len(impostor_scores))))
+        best_bacc = -float("inf")
+        #import pdb; pdb.set_trace()
         for score in predictions:
-            _, _, BAcc = self.reporter(scores=predictions, true_labels=labels, decision=score, scoreType=scoreType)
-            if BAcc > best_BAcc:
-                best_BAcc = BAcc
+            _, _, bacc = self.reporter(scores=predictions, true_labels=labels, decision=score, scoreType=scoreType)
+            if bacc > best_bacc:
+                best_bacc = bacc
                 decision = score
-        #import pdb; pdb.set_trace();
+        #import pdb; pdb.set_trace()
         return decision
+
+    
+    def reporter(self, scores, true_labels, decision, scoreType):
+        y_genuine = list()
+        y_impostor = list()
+        if scoreType=='distance':
+            #y_pred = [1 if score < decision else 0 for score in scores]
+            y_genuine = [1 if scores[i] < decision else 0 for i, sample in enumerate(true_labels) if sample == 1]
+            y_impostor = [1 if scores[i] < decision else 0 for i, sample in enumerate(true_labels) if sample == 0]
+
+        elif scoreType=='similarity':
+            #y_pred = [1 if score > decision else 0 for score in scores]
+            y_genuine = [1 if scores[i] > decision else 0 for i, sample in enumerate(true_labels) if sample == 1]
+            y_impostor = [1 if scores[i] > decision else 0 for i, sample in enumerate(true_labels) if sample == 0]
+            #y_genuine = [1 if y_pred[i]==1 else 0 for i, test_sample in enumerate(true_labels) if test_sample == 1]
+            #y_impostor = [1 if y_pred[i]==0 else 0 for i, test_sample in enumerate(true_labels) if test_sample == 0]
+        fnmr= 1- sum(y_genuine) / len(y_genuine)
+        fmr = sum(y_impostor) / len(y_impostor)
+        #bacc = (sum(y_genuine)/len(y_genuine) + sum(y_impostor) / len(y_impostor)) / 2
+        bacc = 1- (fnmr + fmr)/2
+        return fmr, fnmr, bacc
 
     def ocsvm_score(self, user_model, test_stream):
         try:
@@ -188,40 +209,6 @@ class FindThreshold:
             scores.append(match_sum/max_sum)
         return scores
 
-    def reporter(self, scores, true_labels, decision, scoreType):
-        y_genuine = list()
-        y_impostor = list()
-        if (scoreType=='distance'):
-            for i, score in enumerate(scores):
-                if (score < decision): #classifiquei como positivo
-                    if (true_labels[i] == 1):
-                        y_genuine.append(1)
-                    else:
-                        y_impostor.append(1)
-                else:
-                    if (true_labels[i] == 1):
-                        y_genuine.append(0)
-                    else:
-                        y_impostor.append(0)
-        else:
-             for i, score in enumerate(scores):
-               if (score > decision): #classifiquei como positivo
-                   if (true_labels[i] == 1):
-                       y_genuine.append(1)
-                   else:
-                       y_impostor.append(1)
-               else:
-                   if (true_labels[i] == 1):
-                       y_genuine.append(0)
-                   else:
-                       y_impostor.append(0)
-             #y_genuine = [1 if scores[i] > decision else 0 if s==1 else  , for i, s in enumerate(true_labels)]
-                 
-        FNMR = 1- sum(y_genuine) / len(y_genuine)
-        FMR = sum(y_impostor) / len(y_impostor)
-        BAcc = 1- (FNMR + FMR)/2
-        return FMR, FNMR, BAcc
-
 #####################################################################################################
 #####################################################################################################
 
@@ -261,7 +248,7 @@ class DataStream(ABC):
         pass
 
 class Random(DataStream):
-    def create(self, data=None, genuine=None, internal=None, external=None, random_state=123):
+    def create(self, data=None, genuine=None, internal=None, external=None, random_state=None):
         genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
         l_ds = list() # lista binária. 1 == amostra genuina; 0 == amostra impostora; 
         if type(genuine_samples) != None:

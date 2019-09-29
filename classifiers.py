@@ -276,9 +276,9 @@ class M2005Classifier(ClassificationAlgorithm):
         user_model_object.update(model=usft)
         return user_model_object
 
-    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=0.00, normalize=False):
+    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, normalize=False):
         list_of_scores = list()
-        y_genuino = list()
+        y_genuine = list()
         y_impostor = list()
         y_true = test_stream.loc[:, 'subject'].tolist()
         test_stream=test_stream.drop('subject', axis=1)
@@ -288,11 +288,13 @@ class M2005Classifier(ClassificationAlgorithm):
             for col in test_stream.columns:
                 test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
         
-        for i, row in test_stream.iterrows():
+        #y_pred = list()
+        def help_score(features, user_model, adaptive=self.adaptive):
             match_sum = 0
             previousDimMatched = False
+            #import pdb;pdb.set_trace()
             for dim in user_model.model.keys():
-                if (row[dim] <= user_model.model[dim][1]) and (row[dim] >= user_model.model[dim][0]):
+                if (features[dim] <= user_model.model[dim][1]) and (features[dim] >= user_model.model[dim][0]):
                     if previousDimMatched:
                         match_sum = match_sum + 1.5
                     else:
@@ -300,25 +302,45 @@ class M2005Classifier(ClassificationAlgorithm):
                     previousDimMatched = True
                 else:
                     previousDimMatched = False
-            #import pdb;pdb.set_trace();
             score = match_sum/max_sum
-
-            if (score > decision_threshold[genuine_user]):
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(1)
-                    if self.adaptive != False: # ATUALIZAR O MODELO
-                        AS = AdaptiveStrategy(trainFunction= M2005Classifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
-                                            userModel= user_model, newData=row)
-                        user_model = AS.run(strategy=self.adaptive)
+            return score 
+        
+        if self.adaptive == False:
+            #import pdb;pdb.set_trace()
+            list_of_scores = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
+            y_genuine = [1 if list_of_scores[i] > decision_threshold[genuine_user] else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
+            y_impostor = [1 if list_of_scores[i] > decision_threshold[genuine_user] else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
+            #y_pred = [1 if score > decision_threshold[genuine_user] else 0 for score in list_of_scores]
+            #y_genuine = [1 if y_pred[i]==1 else 0 for i, test_sample in enumerate(y_true) if test_sample == genuine_user]
+            #y_impostor = [1 if y_pred[i]==0 else 0 for i, test_sample in enumerate(y_true) if test_sample != genuine_user]
+        else:
+            for i, features in test_stream.iterrows():
+                match_sum = 0
+                previousDimMatched = False
+                for dim in user_model.model.keys():
+                    if (features[dim] <= user_model.model[dim][1]) and (features[dim] >= user_model.model[dim][0]):
+                        if previousDimMatched:
+                            match_sum = match_sum + 1.5
+                        else:
+                            match_sum = match_sum + 1.0
+                        previousDimMatched = True
+                    else:
+                        previousDimMatched = False
+                score = match_sum/max_sum
+                if score > decision_threshold[genuine_user]:
+                    AS = AdaptiveStrategy(trainFunction= M2005Classifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                                          userModel= user_model, newData=features)
+                    user_model = AS.run(strategy=self.adaptive)
+                    if y_true[i]==genuine_user:
+                        y_genuine.append(1)
+                    else:
+                        y_impostor.append(0)
                 else:
-                    y_impostor.append(1)
-            else:
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(0)
-                else:
-                    y_impostor.append(0)
-            list_of_scores.append(score)
-        return y_genuino, y_impostor, user_model
+                    if y_true[i]==genuine_user:
+                        y_genuine.append(0)
+                    else:
+                        y_impostor.append(1)
+        return y_genuine, y_impostor, user_model
 
 class OCSVMClassifier(ClassificationAlgorithm):
     def train_user_model(self,  user_features=None, normalize=False):
@@ -377,7 +399,7 @@ class RandForestClassifier(ClassificationAlgorithm):
 
         #user_model_object = OCSVMUserModel(features=user_features)
         user_model_object = RandomForestClassifier()
-        user_model_object.update()
+        #user_model_object.update()
         return user_model_object
 
     def test(self):
@@ -442,6 +464,7 @@ class AdaptiveStrategy:
 class Metrics:
     @staticmethod
     def report(y_genuine, y_impostor):
+        #import pdb;pdb.set_trace()
         FNMR = 1.0 - sum(y_genuine)/len(y_genuine)
         FMR = sum(y_impostor)/len(y_impostor)
         B_acc = 1.0 - (FNMR + FMR) / 2.0
