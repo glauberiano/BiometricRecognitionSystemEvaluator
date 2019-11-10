@@ -49,9 +49,13 @@ class MahalanobisUserModel(UserModel):
     def update(self, model):
         self.model = model
 
-class NeuralNetworkUserModel(UserModel):
+class StatisticUserModel(UserModel):
     def update(self, model):
         self.model = model
+
+#class NeuralNetworkUserModel(UserModel):
+#    def update(self, model):
+#        self.model = model
 
 #######################################################################################################
 #######################################################################################################
@@ -101,6 +105,71 @@ class ClassificationAlgorithm(ABC):
         pass
 
 #######################################################################################################
+class StatisticClassifier(ClassificationAlgorithm):
+    def train_user_model(self, user_features):
+        try:
+            user_features=user_features.drop('subject', axis=1)
+        except:
+            pass
+
+        if (self.normalize==True):
+            self._normalize_params = dict()
+            for col in user_features:
+                self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
+                user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
+
+        #import pdb; pdb.set_trace();
+        media = user_features.mean()
+        desvpad = user_features.std()
+        model = {'Mean': media, 'Desvpad': desvpad}
+        user_model = StatisticUserModel(features=user_features)
+        user_model.update(model=model)
+        return user_model
+
+    def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, normalize=False):
+        y_genuine = list()
+        y_impostor = list()
+        model_score = list()
+        y_true = test_stream.loc[:, 'subject'].tolist()
+        test_stream=test_stream.drop('subject', axis=1)
+            
+        if (normalize==True):
+            for col in test_stream.columns:
+                test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
+        
+        #y_pred = list()
+        def help_score(features, user_model, adaptive=self.adaptive):
+            return 1 - sum(np.e ** ( ( abs(features- user_model.model['Mean']) / user_model.model['Desvpad'])*-1 )) / len(features)
+        
+        ## Escolhendo linha de decisao
+        way = 0
+        if way==1:
+            decision = decision_threshold[genuine_user]
+        else:
+            decision = np.mean([*decision_threshold.values()])
+
+        if self.adaptive == False:
+            model_score = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
+            y_genuine = [1 if model_score[i] < decision else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
+            y_impostor = [1 if model_score[i] < decision else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
+        else:
+            for i, features in test_stream.iterrows():
+                score = 1 - sum(np.e ** ( ( abs(features- user_model.model['Mean']) / user_model.model['Desvpad'])*-1 )) / len(features)
+                if score < decision:
+                    AS = AdaptiveStrategy(trainFunction= StatisticClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                                          userModel= user_model, newData=features)
+                    user_model = AS.run(strategy=self.adaptive)
+                    if y_true[i]==genuine_user:
+                        y_genuine.append(1)
+                    else:
+                        y_impostor.append(1)
+                else:
+                    if y_true[i]==genuine_user:
+                        y_genuine.append(0)
+                    else:
+                        y_impostor.append(0)
+                model_score.append(score)
+        return y_genuine, y_impostor, user_model, decision, model_score    
 
 class ManhattanClassifier(ClassificationAlgorithm):
     def train_user_model(self, user_features):
@@ -121,8 +190,8 @@ class ManhattanClassifier(ClassificationAlgorithm):
         return user_model
     
     def test(self, genuine_user, test_stream, user_model, decision_threshold, validation=False):
-        list_of_scores = list()
-        y_genuino = list()
+        model_score = list()
+        y_genuine = list()
         y_impostor = list()
         y_true = test_stream.loc[:, 'subject']
         test_stream=test_stream.drop('subject', axis=1)
@@ -131,27 +200,31 @@ class ManhattanClassifier(ClassificationAlgorithm):
             for col in test_stream.columns:
                 test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
 
+        ## Escolhendo linha de decisao
+        way = 0
+        if way==1:
+            decision = decision_threshold[genuine_user]
+        else:
+            decision = np.mean([*decision_threshold.values()])
+
         for i, row in test_stream.iterrows():
             score = np.sqrt(sum(abs(row - user_model.model)))
             if (score < decision_threshold[genuine_user]):
                 if (y_true[i] == genuine_user):
-                    y_genuino.append(1)
+                    y_genuine.append(1)
                     if self.adaptive != False: # ATUALIZAR O MODELO
-                        ini = time.time()
                         AS = AdaptiveStrategy(trainFunction= ManhattanClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
                         userModel= user_model, newData=row)
                         user_model = AS.run(strategy=self.adaptive)
-                        print("adaptacao: {}".format((time.time() - ini)/60))
-
                 else:
                     y_impostor.append(1)
             else:
                 if (y_true[i] == genuine_user):
-                    y_genuino.append(0)
+                    y_genuine.append(0)
                 else:
                     y_impostor.append(0)
-            list_of_scores.append(score)
-        return y_genuino, y_impostor, user_model
+            model_score.append(score)
+        return y_genuine, y_impostor, user_model, decision, model_score
 
 class EuclidianClassifier(ClassificationAlgorithm):
     def train_user_model(self, user_features):
@@ -172,8 +245,8 @@ class EuclidianClassifier(ClassificationAlgorithm):
         return user_model
 
     def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, validation=False):
-        list_of_scores = list()
-        y_genuino = list()
+        model_score = list()
+        y_genuine = list()
         y_impostor = list()
         y_true = test_stream.loc[:, 'subject']
         test_stream=test_stream.drop('subject', axis=1)
@@ -182,25 +255,41 @@ class EuclidianClassifier(ClassificationAlgorithm):
             for col in test_stream.columns:
                 test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
 
-        for i, row in test_stream.iterrows():
-            score = np.sqrt(sum((row - user_model.model)**2))
-            if (score < decision_threshold[genuine_user]):
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(1)
-                    if self.adaptive != False: # ATUALIZAR O MODELO
-                        AS = AdaptiveStrategy(trainFunction= EuclidianClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
-                        userModel= user_model, newData=row)
-                        user_model = AS.run(strategy=self.adaptive)
+        # limiar de decisão
+        way = 0
+        if way==1:
+            decision = decision_threshold[genuine_user]
+        else:
+            decision = np.mean([*decision_threshold.values()])
 
+        def help_score(features, user_model, adaptive=self.adaptive):
+            score = score = np.sqrt(sum((features - user_model.model)**2))
+            return score
+
+        if self.adaptive == False:
+            model_score = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
+            y_genuine = [1 if model_score[i] < decision else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
+            y_impostor = [1 if model_score[i] < decision else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
+        else:
+            for i, row in test_stream.iterrows():
+                score = np.sqrt(sum((row - user_model.model)**2))
+                if (score < decision_threshold[genuine_user]):
+                    if (y_true[i] == genuine_user):
+                        y_genuine.append(1)
+                        if self.adaptive != False: # ATUALIZAR O MODELO
+                            AS = AdaptiveStrategy(trainFunction= EuclidianClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                            userModel= user_model, newData=row)
+                            user_model = AS.run(strategy=self.adaptive)
+
+                    else:
+                        y_impostor.append(1)
                 else:
-                    y_impostor.append(1)
-            else:
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(0)
-                else:
-                    y_impostor.append(0)
-            list_of_scores.append(score)
-        return y_genuino, y_impostor, user_model
+                    if (y_true[i] == genuine_user):
+                        y_genuine.append(0)
+                    else:
+                        y_impostor.append(0)
+                model_score.append(score)
+        return y_genuine, y_impostor, user_model, decision, model_score   
 
 
 class MahalanobisClassifier(ClassificationAlgorithm):
@@ -224,7 +313,7 @@ class MahalanobisClassifier(ClassificationAlgorithm):
         return user_model
 
     def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=0.00, normalize=False):
-        list_of_scores = list()
+        model_score = list()
         y_genuino = list()
         y_impostor = list()
         y_true = test_stream.loc[:, 'subject']
@@ -234,25 +323,41 @@ class MahalanobisClassifier(ClassificationAlgorithm):
             for col in test_stream.columns:
                 test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
 
-        for i, row in test_stream.iterrows():
-            score = np.sqrt(np.dot(np.dot(row-user_model.model['Mean'], user_model.model['InvCov']), row-user_model.model['Mean'])**2)
-            if (score < decision_threshold[genuine_user]):
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(1)
-                    if self.adaptive != False: # ATUALIZAR O MODELO
-                        AS = AdaptiveStrategy(trainFunction= MahalanobisClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
-                        userModel= user_model, newData=row)
-                        user_model = AS.run(strategy=self.adaptive)
+        ## Escolhendo linha de decisao
+        way = 0
+        if way==1:
+            decision = decision_threshold[genuine_user]
+        else:
+            decision = np.mean([*decision_threshold.values()])
+        
+        def help_score(features, user_model, adaptive=self.adaptive):
+            score = np.sqrt(np.dot(np.dot(features-user_model.model['Mean'], user_model.model['InvCov']), features-user_model.model['Mean'])**2)
+            return score
 
+        if self.adaptive == False:
+            model_score = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
+            y_genuine = [1 if model_score[i] < decision else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
+            y_impostor = [1 if model_score[i] < decision else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
+        else:
+            for i, row in test_stream.iterrows():
+                score = np.sqrt(np.dot(np.dot(row-user_model.model['Mean'], user_model.model['InvCov']), row-user_model.model['Mean'])**2)
+                if (score < decision_threshold[genuine_user]):
+                    if (y_true[i] == genuine_user):
+                        y_genuino.append(1)
+                        if self.adaptive != False: # ATUALIZAR O MODELO
+                            AS = AdaptiveStrategy(trainFunction= MahalanobisClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                            userModel= user_model, newData=row)
+                            user_model = AS.run(strategy=self.adaptive)
+
+                    else:
+                        y_impostor.append(1)
                 else:
-                    y_impostor.append(1)
-            else:
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(0)
-                else:
-                    y_impostor.append(0)
-            list_of_scores.append(score)
-        return y_genuino, y_impostor, user_model
+                    if (y_true[i] == genuine_user):
+                        y_genuino.append(0)
+                    else:
+                        y_impostor.append(0)
+                model_score.append(score)
+        return y_genuine, y_impostor, user_model, decision, model_score
 
 class M2005Classifier(ClassificationAlgorithm):
     def train_user_model(self, user_features=None, normalize=False):
@@ -277,9 +382,9 @@ class M2005Classifier(ClassificationAlgorithm):
         return user_model_object
 
     def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, normalize=False):
-        list_of_scores = list()
         y_genuine = list()
         y_impostor = list()
+        model_score = list()
         y_true = test_stream.loc[:, 'subject'].tolist()
         test_stream=test_stream.drop('subject', axis=1)
         max_sum = 1.0 + 1.5 * (len(user_model.model.keys()) -1)
@@ -305,14 +410,17 @@ class M2005Classifier(ClassificationAlgorithm):
             score = match_sum/max_sum
             return score 
         
+        ## Escolhendo linha de decisao
+        way = 0
+        if way==1:
+            decision = decision_threshold[genuine_user]
+        else:
+            decision = np.mean([*decision_threshold.values()])
+
         if self.adaptive == False:
-            #import pdb;pdb.set_trace()
-            list_of_scores = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
-            y_genuine = [1 if list_of_scores[i] > decision_threshold[genuine_user] else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
-            y_impostor = [1 if list_of_scores[i] > decision_threshold[genuine_user] else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
-            #y_pred = [1 if score > decision_threshold[genuine_user] else 0 for score in list_of_scores]
-            #y_genuine = [1 if y_pred[i]==1 else 0 for i, test_sample in enumerate(y_true) if test_sample == genuine_user]
-            #y_impostor = [1 if y_pred[i]==0 else 0 for i, test_sample in enumerate(y_true) if test_sample != genuine_user]
+            model_score = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
+            y_genuine = [1 if model_score[i] > decision else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
+            y_impostor = [1 if model_score[i] > decision else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
         else:
             for i, features in test_stream.iterrows():
                 match_sum = 0
@@ -327,20 +435,21 @@ class M2005Classifier(ClassificationAlgorithm):
                     else:
                         previousDimMatched = False
                 score = match_sum/max_sum
-                if score > decision_threshold[genuine_user]:
+                if score > decision:
                     AS = AdaptiveStrategy(trainFunction= M2005Classifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
                                           userModel= user_model, newData=features)
                     user_model = AS.run(strategy=self.adaptive)
                     if y_true[i]==genuine_user:
                         y_genuine.append(1)
                     else:
-                        y_impostor.append(0)
+                        y_impostor.append(1)
                 else:
                     if y_true[i]==genuine_user:
                         y_genuine.append(0)
                     else:
-                        y_impostor.append(1)
-        return y_genuine, y_impostor, user_model
+                        y_impostor.append(0)
+                model_score.append(score)
+        return y_genuine, y_impostor, user_model, decision, model_score
 
 class OCSVMClassifier(ClassificationAlgorithm):
     def train_user_model(self,  user_features=None, normalize=False):
@@ -361,34 +470,53 @@ class OCSVMClassifier(ClassificationAlgorithm):
 
     def test(self, genuine_user=None, test_stream=None, user_model=None, decision_threshold=None, validation=False, normalize=False):
         list_of_scores = list()
-        y_genuino = list()
+        y_genuine = list()
         y_impostor = list()
+        model_score = list()
         y_true = test_stream.loc[:, 'subject']
         test_stream=test_stream.drop('subject', axis=1)
 
         if normalize==True:
             for col in test_stream.columns:
                 test_stream[col] = (test_stream[col] - self._normalize_params[col][0]) / self._normalize_params[col][1]
+        
+        def help_score(features, user_model, adaptive=self.adaptive):
+            #import pdb; pdb.set_trace()
+            score = user_model.model.decision_function(features.values.reshape(1,-1))
+            return score.item()
+            
+        ## Escolhendo linha de decisao
+        way = 0
+        if way==1:
+            decision = decision_threshold[genuine_user]
+        else:
+            decision = np.mean([*decision_threshold.values()])
 
-        for i, row in test_stream.iterrows():
-            score = user_model.model.decision_function(row.values.reshape(1,-1))
-            if (score < decision_threshold[genuine_user]):
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(1)
-                    if self.adaptive != False: # ATUALIZAR O MODELO
-                        AS = AdaptiveStrategy(trainFunction= OCSVMClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
-                        userModel= user_model, newData=row)
-                        user_model = AS.run(strategy=self.adaptive)
+        #import pdb; pdb.set_trace()
+        if self.adaptive == False:
+            model_score = test_stream.apply(lambda x: help_score(x, user_model), axis=1) 
+            y_genuine = [1 if model_score[i] > decision else 0 for i, sample in enumerate(y_true) if sample == genuine_user]
+            y_impostor = [1 if model_score[i] > decision else 0 for i, sample in enumerate(y_true) if sample != genuine_user]
+        else:
+            for i, row in test_stream.iterrows():
+                score = user_model.model.decision_function(row.values.reshape(1,-1))
+                if (score > decision_threshold[genuine_user]):
+                    if (y_true[i] == genuine_user):
+                        y_genuine.append(1)
+                        if self.adaptive != False: # ATUALIZAR O MODELO
+                            AS = AdaptiveStrategy(trainFunction= OCSVMClassifier(name=self.name, adaptive=self.adaptive, normalize=self.normalize),
+                            userModel= user_model, newData=row)
+                            user_model = AS.run(strategy=self.adaptive)
 
+                    else:
+                        y_impostor.append(1)
                 else:
-                    y_impostor.append(1)
-            else:
-                if (y_true[i] == genuine_user):
-                    y_genuino.append(0)
-                else:
-                    y_impostor.append(0)
-            list_of_scores.append(score)
-        return y_genuino, y_impostor, user_model
+                    if (y_true[i] == genuine_user):
+                        y_genuine.append(0)
+                    else:
+                        y_impostor.append(0)
+                model_score.append(score)
+        return y_genuine, y_impostor, user_model, decision, model_score
 
 class RandForestClassifier(ClassificationAlgorithm):
     def train_user_model(self, user_features=None, normalize=False):

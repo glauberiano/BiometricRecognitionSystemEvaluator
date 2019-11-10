@@ -4,7 +4,7 @@ import random
 import math
 from sklearn.metrics import classification_report, confusion_matrix 
 from abc import ABC, abstractmethod
-from classifiers import M2005Classifier, EuclidianClassifier, ManhattanClassifier, OCSVMClassifier, MahalanobisClassifier
+from classifiers import M2005Classifier, EuclidianClassifier, ManhattanClassifier, OCSVMClassifier, MahalanobisClassifier, StatisticClassifier
 import time
 
 class Enrollment:
@@ -72,7 +72,10 @@ class FindThreshold:
                     first = False
                 else:
                     impostor_df = pd.concat([impostor_df, usersData[iu][:model_size]], axis=0, ignore_index=True)
-            impostor_data  = impostor_df.sample(model_size//2, replace=False, random_state=self.random_state).reset_index(drop=True) #sorteio de 20 amostras aleatorias dentre todas as possíveis          
+            
+            #import pdb; pdb.set_trace()
+            impostor_df = impostor_df.reset_index(drop=True)
+            impostor_data  = impostor_df.sample(model_size//2, replace=False, random_state=self.random_state) #sorteio de 20 amostras aleatorias dentre todas as possíveis          
         
             # Gerando scores para fluxo genuino e impostor
             #import pdb; pdb.set_trace()
@@ -90,15 +93,18 @@ class FindThreshold:
                 genuineScores = self.manhattan_score(user_model.model, usersData[user][model_size//2:model_size])
                 impostorScores = self.manhattan_score(user_model.model, impostor_data.loc[:,impostor_data.columns!='subject'])
             elif self.model == 'OCSVM':
-                scoreType = 'distance'
+                scoreType = 'similarity'
                 genuineScores = self.ocsvm_score(user_model, usersData[user][model_size//2:model_size])
                 impostorScores = self.ocsvm_score(user_model, impostor_data.loc[:,impostor_data.columns!='subject'])
             elif self.model == 'Mahalanobis':
                 scoreType = 'distance'
-                #genuineScores = self.mahalanobis_score(user_model, usersData[user][20:40])
                 genuineScores = self.mahalanobis_score(user_model, usersData[user][model_size//2:model_size])
                 impostorScores = self.mahalanobis_score(user_model, impostor_data.loc[:,impostor_data.columns!='subject'])
-            
+            elif self.model == 'Statistic':
+                scoreType = 'distance'
+                genuineScores = self.statistic_score(user_model, usersData[user][model_size//2:model_size])
+                impostorScores = self.statistic_score(user_model, impostor_data.loc[:,impostor_data.columns!='subject'])
+            #import pdb;pdb.set_trace()
             decision_threshold = self.calculate_best_threshold(user_scores=genuineScores, impostor_scores=impostorScores, scoreType=scoreType)
             thresholds_dict[user] = decision_threshold
         return thresholds_dict
@@ -121,21 +127,29 @@ class FindThreshold:
         y_genuine = list()
         y_impostor = list()
         if scoreType=='distance':
-            #y_pred = [1 if score < decision else 0 for score in scores]
             y_genuine = [1 if scores[i] < decision else 0 for i, sample in enumerate(true_labels) if sample == 1]
             y_impostor = [1 if scores[i] < decision else 0 for i, sample in enumerate(true_labels) if sample == 0]
 
         elif scoreType=='similarity':
-            #y_pred = [1 if score > decision else 0 for score in scores]
             y_genuine = [1 if scores[i] > decision else 0 for i, sample in enumerate(true_labels) if sample == 1]
             y_impostor = [1 if scores[i] > decision else 0 for i, sample in enumerate(true_labels) if sample == 0]
-            #y_genuine = [1 if y_pred[i]==1 else 0 for i, test_sample in enumerate(true_labels) if test_sample == 1]
-            #y_impostor = [1 if y_pred[i]==0 else 0 for i, test_sample in enumerate(true_labels) if test_sample == 0]
+        
         fnmr= 1- sum(y_genuine) / len(y_genuine)
         fmr = sum(y_impostor) / len(y_impostor)
-        #bacc = (sum(y_genuine)/len(y_genuine) + sum(y_impostor) / len(y_impostor)) / 2
         bacc = 1- (fnmr + fmr)/2
         return fmr, fnmr, bacc
+
+    def statistic_score(self, user_model, test_stream):
+        try:
+            test_stream=test_stream.drop('subject', axis=1)
+        except:
+            pass
+
+        scores =list()
+        for _, row in test_stream.iterrows():
+            score = 1 - sum(np.e ** ( ( abs(row- user_model.model['Mean']) / user_model.model['Desvpad'])*-1 )) / len(row)
+            scores.append(score)
+        return scores
 
     def ocsvm_score(self, user_model, test_stream):
         try:
@@ -263,7 +277,8 @@ class Random(DataStream):
             impostor_samples = impostor_samples.reset_index(drop=True)
 
         #random.Random(42).shuffle(l_ds) #Embaralha a a lista binária
-        self.random_state.shuffle(l_ds)
+        random.seed(random_state)
+        random.shuffle(l_ds)
         datastream = list()
         #import pdb;pdb.set_trace();
         
