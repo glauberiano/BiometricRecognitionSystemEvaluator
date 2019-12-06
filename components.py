@@ -26,11 +26,11 @@ class Enrollment:
         user_information = {} #dicionário em que serão salvas as informações de cada usuário registrado
         index_used_in_db = list() #lista de indices das observações salvas no banco de dados
         for user in users_list: #para cada usuário no dataset enviado
-            temp = dataset[dataset['subject'] == user].reset_index(drop=True) #separar as observações de cada usuário
+            temp = dataset[dataset['subject'] == user] #separar as observações de cada usuário
             user_information[user] = temp.iloc[:n_amostras] #salvar as n primeiras observações para encontrar o melhor threshold
             index_used_in_db = index_used_in_db + user_information[user].index.tolist() #guardar os indices utilizados
         
-        #import pdb;pdb.set_trace();
+       # import pdb;pdb.set_trace();
         users_decision_threshold = best_threshold.run(usersData=user_information, model_size=n_amostras)
         data_not_used = dataset.drop(dataset.index[index_used_in_db]) #salvar as observações que não foram utilizadas, para utilizar na etapa de teste
         return user_information, data_not_used, users_decision_threshold
@@ -263,6 +263,7 @@ class DataStream(ABC):
 
 class Random(DataStream):
     def create(self, data=None, genuine=None, internal=None, external=None, random_state=None):
+        #import pdb; pdb.set_trace()
         genuine_samples, impostor_samples = self._extract_datasets(data=data, genuine=genuine, internal=internal, external=external)
         l_ds = list() # lista binária. 1 == amostra genuina; 0 == amostra impostora; 
         if type(genuine_samples) != None:

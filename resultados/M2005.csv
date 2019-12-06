@@ -1,2 +1,0 @@
-adaptive,impostor_rate,method,model_size,normalize,rate_external_impostor,sampling,Bacc_mean,Bacc_std,FMR_mean,FMR_std,FNMR_mean,FNMR_std
-False,0.3,M2005,40,False,0,Random,0.7095234330441375,0.189481058980528,0.26991963717969913,0.30838012574678936,0.3110334967320261,0.24308749173438018

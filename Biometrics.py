@@ -12,6 +12,7 @@ from classifiers import Metrics
 import pandas as pd
 import numpy as np
 import pickle
+import sys
 import os
 import time
 import IPython.core.display as ipd
@@ -60,11 +61,11 @@ class RecognitionSystem:
         self.decision = list()
         self.model_score = list()
         for internal_idx, external_idx in splits:
-            #import pdb; pdb.set_trace()
+            #
             u_reg = self._usuarios[internal_idx]
             u_nao_reg = self._usuarios[external_idx]
             usersDatabase, samples, decision_threshold = splitTrainTest.create(dataset=dataset, n_amostras=model_size, users_list=u_reg, classifier=method, normalize=normalize, random_state=self.random_state)
-            #import pdb; pdb.set_trace();
+            
             for usuario_genuino in u_reg:
                 test_stream = data_stream.create(data=samples, genuine=usuario_genuino, internal=u_reg, external=u_nao_reg)
                 RecognitionSystem.check_len_test_stream(y_true=test_stream['subject'], impostor_rate=impostor_rate, genuine_user=usuario_genuino)
@@ -89,6 +90,7 @@ class RecognitionSystem:
         ''' 
             Essa função deve receber a variável 'p' e checar paralelamente se todos os conjuntos de parametros enviados estao de acordo.
         '''
+        pass
 
     def fit(self, user_column='subject', metric=None, param_grid=None):
         #0import pdb; pdb.set_trace()

@@ -363,6 +363,7 @@ class M2005Classifier(ClassificationAlgorithm):
     def train_user_model(self, user_features=None, normalize=False):
         user_model_object = M2005UserModel(features=user_features)
         usft = dict()
+        temp = user_features['subject']
         try:
             user_features=user_features.drop('subject', axis=1)
         except:
@@ -374,10 +375,19 @@ class M2005Classifier(ClassificationAlgorithm):
                 self._normalize_params[col] = (np.mean(user_features[col]) , np.std(user_features[col]))
                 user_features[col] = (user_features[col] - np.mean(user_features[col])) / np.std(user_features[col])
         
-        for feature in user_features:
-            lower = min(user_features[feature].mean(), user_features[feature].median()) * (0.95 - (user_features[feature].std() / user_features[feature].mean()))
-            upper = max(user_features[feature].mean(), user_features[feature].median()) * (1.05 + (user_features[feature].std() / user_features[feature].mean()))
-            usft[feature] = (lower, upper)
+        #import pdb; pdb.set_trace()
+        try:
+            for feature in user_features:
+                if user_features[feature].mean() == 0:
+                    lower = min(user_features[feature].mean(), user_features[feature].median()) * (0.95 - (user_features[feature].std() / 0.00001))
+                    upper = max(user_features[feature].mean(), user_features[feature].median()) * (1.05 + (user_features[feature].std() / 0.00001))
+                else:
+                    lower = min(user_features[feature].mean(), user_features[feature].median()) * (0.95 - (user_features[feature].std() / user_features[feature].mean()))
+                    upper = max(user_features[feature].mean(), user_features[feature].median()) * (1.05 + (user_features[feature].std() / user_features[feature].mean()))
+                usft[feature] = (lower, upper)
+        except:
+            pass
+            #import pdb; pdb.set_trace()    
         user_model_object.update(model=usft)
         return user_model_object
 
